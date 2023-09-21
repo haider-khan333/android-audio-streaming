@@ -1,5 +1,7 @@
 package ai.issm.audiostreaming;
 
+import static ai.issm.audiostreaming.Config.WEBSOCKET_URL;
+
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
@@ -12,11 +14,15 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 
+import org.json.JSONObject;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
 
+import io.reactivex.rxjava3.core.Observable;
+import io.reactivex.rxjava3.subjects.PublishSubject;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -39,39 +45,53 @@ public class WebSocketExample {
     private long packetIntervalMs = 500; // 0.5 seconds interval for sending packets
     private int packetNumber = 0;
 
+    private Callbacks callbacks;
+
     private static final int SAMPLE_RATE_IN_HZ = 44100;
     private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
     private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
+
+    private JSONObject jsonObject;
+
+    private final PublishSubject<String> publishSubject = PublishSubject.create();
 
 
     public WebSocketExample(Context context) {
         this.okHttpClient = new OkHttpClient();
         this.context = context;
-        run();
+        this.jsonObject = new JSONObject();
+        this.run();
+
+
     }
 
     private void run() {
         Request request = new Request.Builder()
-                .url("ws://192.168.18.22:8000/xyz")
+                .url(WEBSOCKET_URL)
                 .build();
+
 
         WebSocketListener webSocketListener = new WebSocketListener() {
             @Override
             public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
                 super.onClosed(webSocket, code, reason);
                 System.out.println("Closing: " + code + " / " + reason);
-            }
-
-            @Override
-            public void onClosing(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
-                webSocket.close(1000, null);
-                System.out.println("Closing: " + code + " / " + reason);
-                Log.e("TAG", "WebSocket Failure: " + reason);
                 isConnectionOpen = false;
             }
 
             @Override
+            public void onClosing(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
+                super.onClosing(webSocket, code, reason);
+                webSocket.close(1000, null);
+                System.out.println("Closing: " + code + " / " + reason);
+                Log.e("TAG", "WebSocket Failure: " + reason);
+                isConnectionOpen = false;
+
+            }
+
+            @Override
             public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, @Nullable Response response) {
+                super.onFailure(webSocket, t, response);
                 System.out.println("Error: " + t.getMessage());
                 Log.e("TAG", "WebSocket Failure: " + t.getMessage());
                 isConnectionOpen = false;
@@ -79,41 +99,32 @@ public class WebSocketExample {
 
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
-                System.out.println("Receiving: " + text);
-                if (text.equals("Hello from server")) {
-                    webSocket.send("Hello from haider");
+                super.onMessage(webSocket, text);
+                System.out.println("Receiving an onMessage: " + text);
+                try {
+                    callbacks.onResponseReceived(text);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
                 }
+
             }
 
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull ByteString bytes) {
-                System.out.println("Receiving: " + bytes.hex());
+                super.onMessage(webSocket, bytes);
+                System.out.println("Receiving on onMessageHex: " + bytes.hex());
             }
 
             @Override
             public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
+                super.onOpen(webSocket, response);
                 isConnectionOpen = true;
-//                webSocket.send("Conversation started");
-//                webSocket.send("Hello from haider");
             }
         };
 
         this.webSocket = okHttpClient.newWebSocket(request, webSocketListener);
 
 
-    }
-
-    public void sendMessage(String message) {
-
-        if (this.webSocket == null) {
-
-            return;
-        }
-        if (isConnectionOpen) {
-            this.webSocket.send(message);
-        } else {
-            Log.e("TAG", "WebSocket Failure: Connection is not open");
-        }
     }
 
     public void cleanUp() {
@@ -169,52 +180,64 @@ public class WebSocketExample {
     }
 
 
-    public void startRecordingAndStreaming() {
-        int bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE_IN_HZ, CHANNEL_CONFIG, AUDIO_FORMAT);
+    public void startSendingAudioPackets(boolean flag) {
+        int sampleRateInHz = 44100;
+        int channelConfig = AudioFormat.CHANNEL_IN_MONO;
+        int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
+
+
+        int bufferSize = AudioRecord.getMinBufferSize(sampleRateInHz, channelConfig, audioFormat);
+
+
+        // Check if the microphone permission is granted
         if (ActivityCompat.checkSelfPermission(this.context,
                 android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-//               public void onRequestPermissionsResult(int requestCode, String[] permissions,
-//                                                      int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
             return;
         }
-        AudioRecord audioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE_IN_HZ, CHANNEL_CONFIG, AUDIO_FORMAT, bufferSize);
 
-        byte[] audioBuffer = new byte[bufferSize];
+
+        AudioRecord audioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC, sampleRateInHz,
+                channelConfig, audioFormat, bufferSize);
+
+        byte[] audioBuffer = new byte[1024];  // Adjust buffer size as necessary
         audioRecord.startRecording();
 
-
         int packetNumber = 0;
+        long startTime = System.currentTimeMillis();
+        long recordTime = 4000;  // Adjust recording time as necessary (e.g., 5000 for 5 seconds)
 
-        while (System.currentTimeMillis() - startTime < recordingDurationMs) {
-            int bytesRead = audioRecord.read(audioBuffer, 0, bufferSize);
+        try {
+            while (System.currentTimeMillis() - startTime < recordTime) {
+                int bytesRead = audioRecord.read(audioBuffer, 0, audioBuffer.length);
 
-            if (bytesRead > 0) {
-                // Send audio data with packet number
-                webSocket.send("Packet " + packetNumber + ": " +
-                        Base64.encodeToString(audioBuffer, Base64.DEFAULT));
-                packetNumber++;
+                if (bytesRead > 0) {
+                    if (isConnectionOpen) {
+
+                        jsonObject = Utils.getAudioJSON(String.valueOf(packetNumber),
+                                Base64.encodeToString(audioBuffer, Base64.DEFAULT));
+                        webSocket.send(jsonObject.toString());
+                        packetNumber++;
+                    }
+                }
+
+                Thread.sleep(500);  // 0.5-second interval
             }
-
-            // Sleep for the packet interval before the next iteration
-            try {
-                Thread.sleep(packetIntervalMs);
-            } catch (InterruptedException e) {
-                // Handle the interruption appropriately
-                e.printStackTrace();
-                Log.e("TAG", "startRecordingAndStreaming: " + e.getMessage());
-            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            Log.e(TAG, "startSendingAudioPackets: " + e.getMessage());
         }
 
-        // Poll for the response
-        // ... (implement polling logic to get processed response from server)
+        jsonObject = Utils.getAudioJSON(String.valueOf(packetNumber), "EOS");
+        webSocket.send(jsonObject.toString());
 
         audioRecord.stop();
         audioRecord.release();
     }
+
+    public Observable<String> getObservableInstance() {
+        return this.publishSubject.hide();
+
+    }
+
+
 }
