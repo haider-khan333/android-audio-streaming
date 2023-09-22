@@ -14,6 +14,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -21,7 +22,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
 
+import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
+import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Observable;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import io.reactivex.rxjava3.subjects.PublishSubject;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -45,7 +49,6 @@ public class WebSocketExample {
     private long packetIntervalMs = 500; // 0.5 seconds interval for sending packets
     private int packetNumber = 0;
 
-    private Callbacks callbacks;
 
     private static final int SAMPLE_RATE_IN_HZ = 44100;
     private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
@@ -54,6 +57,7 @@ public class WebSocketExample {
     private JSONObject jsonObject;
 
     private final PublishSubject<String> publishSubject = PublishSubject.create();
+    private final PublishSubject<Boolean> publishIsRecording = PublishSubject.create();
 
 
     public WebSocketExample(Context context) {
@@ -95,23 +99,29 @@ public class WebSocketExample {
                 System.out.println("Error: " + t.getMessage());
                 Log.e("TAG", "WebSocket Failure: " + t.getMessage());
                 isConnectionOpen = false;
+                publishSubject.onError(t);
             }
 
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
                 super.onMessage(webSocket, text);
-                System.out.println("Receiving an onMessage: " + text);
                 try {
-                    callbacks.onResponseReceived(text);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
+                    JSONObject jsonObject = new JSONObject(text);
+                    String code = jsonObject.getString("message");
+                    publishSubject.onNext(code);
+                } catch (JSONException e) {
+                    publishSubject.onError(e);
+
                 }
+                System.out.println("Receiving an onMessage: " + text);
+
 
             }
 
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull ByteString bytes) {
                 super.onMessage(webSocket, bytes);
+                publishSubject.onNext(bytes.hex());
                 System.out.println("Receiving on onMessageHex: " + bytes.hex());
             }
 
@@ -119,6 +129,7 @@ public class WebSocketExample {
             public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
                 super.onOpen(webSocket, response);
                 isConnectionOpen = true;
+                System.out.println("Connection established: " + response);
             }
         };
 
@@ -181,62 +192,81 @@ public class WebSocketExample {
 
 
     public void startSendingAudioPackets(boolean flag) {
-        int sampleRateInHz = 44100;
-        int channelConfig = AudioFormat.CHANNEL_IN_MONO;
-        int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
+
+        publishIsRecording.onNext(true);
+
+        Completable.fromAction(() -> {
+                    int sampleRateInHz = 44100;
+                    int channelConfig = AudioFormat.CHANNEL_IN_MONO;
+                    int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
 
 
-        int bufferSize = AudioRecord.getMinBufferSize(sampleRateInHz, channelConfig, audioFormat);
+                    int bufferSize = AudioRecord.getMinBufferSize(sampleRateInHz, channelConfig, audioFormat);
 
 
-        // Check if the microphone permission is granted
-        if (ActivityCompat.checkSelfPermission(this.context,
-                android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
-
-
-        AudioRecord audioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC, sampleRateInHz,
-                channelConfig, audioFormat, bufferSize);
-
-        byte[] audioBuffer = new byte[1024];  // Adjust buffer size as necessary
-        audioRecord.startRecording();
-
-        int packetNumber = 0;
-        long startTime = System.currentTimeMillis();
-        long recordTime = 4000;  // Adjust recording time as necessary (e.g., 5000 for 5 seconds)
-
-        try {
-            while (System.currentTimeMillis() - startTime < recordTime) {
-                int bytesRead = audioRecord.read(audioBuffer, 0, audioBuffer.length);
-
-                if (bytesRead > 0) {
-                    if (isConnectionOpen) {
-
-                        jsonObject = Utils.getAudioJSON(String.valueOf(packetNumber),
-                                Base64.encodeToString(audioBuffer, Base64.DEFAULT));
-                        webSocket.send(jsonObject.toString());
-                        packetNumber++;
+                    // Check if the microphone permission is granted
+                    if (ActivityCompat.checkSelfPermission(this.context,
+                            android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                        return;
                     }
-                }
 
-                Thread.sleep(500);  // 0.5-second interval
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            Log.e(TAG, "startSendingAudioPackets: " + e.getMessage());
-        }
 
-        jsonObject = Utils.getAudioJSON(String.valueOf(packetNumber), "EOS");
-        webSocket.send(jsonObject.toString());
+                    AudioRecord audioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC, sampleRateInHz,
+                            channelConfig, audioFormat, bufferSize);
 
-        audioRecord.stop();
-        audioRecord.release();
+                    byte[] audioBuffer = new byte[1024];  // Adjust buffer size as necessary
+                    audioRecord.startRecording();
+
+
+                    int packetNumber = 0;
+                    long startTime = System.currentTimeMillis();
+                    long recordTime = 4000;  // Adjust recording time as necessary (e.g., 5000 for 5 seconds)
+
+                    try {
+                        while (System.currentTimeMillis() - startTime < recordTime) {
+                            int bytesRead = audioRecord.read(audioBuffer, 0, audioBuffer.length);
+
+                            if (bytesRead > 0) {
+                                if (isConnectionOpen) {
+
+                                    jsonObject = Utils.getAudioJSON(String.valueOf(packetNumber),
+                                            Base64.encodeToString(audioBuffer, Base64.DEFAULT));
+                                    webSocket.send(jsonObject.toString());
+                                    packetNumber++;
+                                }
+                            }
+
+                            Thread.sleep(500);  // 0.5-second interval
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        Log.e(TAG, "startSendingAudioPackets: " + e.getMessage());
+                    }
+
+                    jsonObject = Utils.getAudioJSON(String.valueOf(packetNumber), "EOS");
+                    webSocket.send(jsonObject.toString());
+
+                    System.out.println("Done sending audio packets");
+
+                    audioRecord.stop();
+                    audioRecord.release();
+                    publishIsRecording.onNext(false);
+
+                }).subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(() -> System.out.println("Done sending audio packets"),
+                        (error) -> System.out.println("Error sending audio packets"));
+
+
     }
 
     public Observable<String> getObservableInstance() {
         return this.publishSubject.hide();
 
+    }
+
+    public Observable<Boolean> getObservableRecordingInstance() {
+        return this.publishIsRecording.hide();
     }
 
 

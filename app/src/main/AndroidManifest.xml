@@ -16,6 +16,12 @@
         android:theme="@style/Theme.AudioStreaming"
         android:usesCleartextTraffic="true"
         tools:targetApi="31">
+
+        <activity
+            android:name=".ResponseActivity"
+            android:parentActivityName=".MainActivity" />
+
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
