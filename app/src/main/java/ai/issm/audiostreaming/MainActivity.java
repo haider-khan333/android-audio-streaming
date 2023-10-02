@@ -9,10 +9,14 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import ai.issm.audiostreaming.domain.usecase.WebSocketInteractor;
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.disposables.Disposable;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
+
+
+    private WebSocketInteractor webSocketInteractor;
 
 
     // UI Variables
@@ -47,7 +51,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         permissionHandler = new PermissionHandler(this);
 
-        webSocketExample = new WebSocketExample(this);
+//        webSocketExample = new WebSocketExample(this);
+//        webSocketInteractor = new WebSocketInteractor(webSocketExample);
         button.setOnClickListener(this);
 
         initializeWebSocket();
@@ -64,42 +69,44 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     private void initializeWebSocket() {
-        if (webSocketExample != null)
-            webSocketExample.cleanUp();
+        if (webSocketInteractor != null)
+            webSocketInteractor.cleanUp();
 
+        webSocketInteractor = new WebSocketInteractor(this);
 
-        webSocketExample = new WebSocketExample(this);
 
         if (disposable != null)
             disposable.dispose();
 
 
-        disposable = webSocketExample.getObservableInstance()
+        disposable = webSocketInteractor.getMessageStream()
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(message -> {
-                    Intent intent = new Intent(this, ResponseActivity.class);
-                    intent.putExtra("message", message);
-                    startActivity(intent);
+                .subscribe(this::handleMessage, this::handleError);
 
-                }, error -> {
-                    Log.i(TAG, "onCreate: error: " + error.getMessage());
-                });
-
-        disposable = webSocketExample.getObservableRecordingInstance()
+        disposable = webSocketInteractor.getRecordingStatusStream()
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(isRecording -> {
-                    if (isRecording) {
-                        System.out.println("isRecording: " + isRecording);
-                        recordingStatusTextView.setText("Recording...");
-                        button.setEnabled(false);
-                    } else {
-                        System.out.println("isRecording: " + isRecording);
-                        recordingStatusTextView.setText("Not Recording");
-                        button.setEnabled(true);
-                    }
-                }, error -> {
-                    Log.i(TAG, "onCreate: error: " + error.getMessage());
-                });
+                .subscribe(this::handleRecordingStatus, this::handleError);
+    }
+
+
+    private void handleMessage(String message) {
+        Intent intent = new Intent(this, ResponseActivity.class);
+        intent.putExtra("message", message);
+        startActivity(intent);
+    }
+
+    private void handleError(Throwable error) {
+        Log.i(TAG, "handleError: " + error);
+    }
+
+    private void handleRecordingStatus(Boolean isRecording) {
+        if (isRecording) {
+            recordingStatusTextView.setText("Recording...");
+            button.setEnabled(false);
+        } else {
+            recordingStatusTextView.setText("Not Recording");
+            button.setEnabled(true);
+        }
     }
 
     @Override
@@ -111,8 +118,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
             } else {
                 Log.i(TAG, "onRequestPermissionsResult: Audio Permission Denied");
-
-
             }
         }
     }
@@ -123,8 +128,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if (permissionHandler.hasRecordAudioPermission()) {
             Log.i(TAG, "onClick: permission already granted");
             button.setEnabled(false);
-            webSocketExample.startSendingAudioPackets(true);
-
+//            webSocketExample.startSendingAudioPackets();
+            webSocketInteractor.startSendingAudioPackets();
 
 
         } else {
@@ -133,5 +138,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
 
+        if (disposable != null)
+            disposable.dispose();
+
+        webSocketInteractor.cleanUp();
+
+
+    }
 }

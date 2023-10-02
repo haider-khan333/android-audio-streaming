@@ -2,6 +2,7 @@ package ai.issm.audiostreaming;
 
 import static ai.issm.audiostreaming.Config.WEBSOCKET_URL;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
@@ -143,55 +144,56 @@ public class WebSocketExample {
     }
 
 
-    private byte[] getAudioFileData() {
-        try {
-            InputStream inputStream = context.getResources().openRawResource(R.raw.audio);
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            byte[] buf = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = inputStream.read(buf)) != -1) {
-                outputStream.write(buf, 0, bytesRead);
-            }
-            inputStream.close();
-            return outputStream.toByteArray();
-        } catch (IOException e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
+//    private byte[] getAudioFileData() {
+//        try {
+//            InputStream inputStream = context.getResources().openRawResource(R.raw.audio);
+//            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+//            byte[] buf = new byte[1024];
+//            int bytesRead;
+//            while ((bytesRead = inputStream.read(buf)) != -1) {
+//                outputStream.write(buf, 0, bytesRead);
+//            }
+//            inputStream.close();
+//            return outputStream.toByteArray();
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//            return null;
+//        }
+//    }
 
+//    public void startSendingAudioPackets() {
+//        byte[] audioData = getAudioFileData();
+//        if (audioData == null) {
+//            Log.e(TAG, "Failed to read audio file");
+//            return;
+//        }
+//
+//        int packetSize = 1024; // You might want to choose a different size
+//        int packetNumber = 0;
+//
+//        for (int i = 0; i < audioData.length; i += packetSize) {
+//            final int end = Math.min(i + packetSize, audioData.length);
+//            final byte[] packet = Arrays.copyOfRange(audioData, i, end);
+//
+//            if (isConnectionOpen) {
+//                webSocket.send("Packet " + packetNumber + ": " + Base64.encodeToString(packet, Base64.DEFAULT));
+//                packetNumber++;
+//            } else {
+//                Log.e(TAG, "WebSocket Failure: Connection is not open");
+//            }
+//
+//            try {
+//                Thread.sleep(500); // 0.5-second interval
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//                Log.e(TAG, "startSendingAudioPackets: " + e.getMessage());
+//            }
+//        }
+//    }
+
+
+    @SuppressLint("CheckResult")
     public void startSendingAudioPackets() {
-        byte[] audioData = getAudioFileData();
-        if (audioData == null) {
-            Log.e(TAG, "Failed to read audio file");
-            return;
-        }
-
-        int packetSize = 1024; // You might want to choose a different size
-        int packetNumber = 0;
-
-        for (int i = 0; i < audioData.length; i += packetSize) {
-            final int end = Math.min(i + packetSize, audioData.length);
-            final byte[] packet = Arrays.copyOfRange(audioData, i, end);
-
-            if (isConnectionOpen) {
-                webSocket.send("Packet " + packetNumber + ": " + Base64.encodeToString(packet, Base64.DEFAULT));
-                packetNumber++;
-            } else {
-                Log.e(TAG, "WebSocket Failure: Connection is not open");
-            }
-
-            try {
-                Thread.sleep(500); // 0.5-second interval
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                Log.e(TAG, "startSendingAudioPackets: " + e.getMessage());
-            }
-        }
-    }
-
-
-    public void startSendingAudioPackets(boolean flag) {
 
         publishIsRecording.onNext(true);
 
